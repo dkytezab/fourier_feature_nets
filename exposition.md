@@ -1,3 +1,19 @@
-$$ a^2 + b^2 = c^2$$
+```latex
+\documentclass[11pt]{article}
 
-some additional text here
+% Packages
+\usepackage[a4paper, margin=1in]{geometry} % Page layout
+\usepackage{graphicx}                     % For including graphics
+\usepackage{amsmath, amssymb}             % Math symbols
+\usepackage{hyperref}                     % Hyperlinks
+\usepackage{multicol}                     % For multicolumn layouts
+\usepackage{titlesec}                     % Section title formatting
+\usepackage{xcolor}                       % For colors
+\usepackage{fancyhdr}                     % Custom headers/footers
+\usepackage{amsthm}
+\usepackage{subfigure}
+\usepackage{cite}
+
+\begin{document}
+For clarity, we introduce several pieces of notation and background. We consider some arbitrary data-set $\mathcal{D} = \{\mathbf{x}_i, \mathbf{y}_i\}_{i = 1}^N$ where $\mathbf{x}_i \in \mathbb{R}^d, \mathbf{y}_i \in \mathbb{R}^{d'}$
+\end{document}
