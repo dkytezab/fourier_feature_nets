@@ -1,0 +1,239 @@
+\documentclass[11pt]{article}
+
+% Packages
+\usepackage[a4paper, margin=1in]{geometry} % Page layout
+\usepackage{graphicx}                     % For including graphics
+\usepackage{amsmath, amssymb}             % Math symbols
+\usepackage{hyperref}                     % Hyperlinks
+\usepackage{multicol}                     % For multicolumn layouts
+\usepackage{titlesec}                     % Section title formatting
+\usepackage{xcolor}                       % For colors
+\usepackage{fancyhdr}                     % Custom headers/footers
+\usepackage{amsthm}
+\usepackage{subfigure}
+\usepackage{cite}
+
+
+% Commands
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\X}{\mathcal{X}}
+\newcommand{\Y}{\mathcal{Y}}
+
+% Colors
+\definecolor{mdpiorange}{HTML}{E96B30}    % Define custom color for accents
+
+% Title formatting
+\titleformat{\section}
+{\Large\bfseries\sffamily\color{black}}  % Section style
+{}{0pt}{}
+
+% Header/Footer settings
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textbf{APMA 1930Z - Mathematical Machine Learning}}
+\fancyhead[R]{\thepage}
+
+% Document title
+\title{\textbf{\sffamily Random Fourier Features and Spectral Bias}}
+\author{Daniel Kyte-Zable}
+\date{}
+
+
+
+
+% Begin Document
+\begin{document}
+
+\newtheorem*{btheorem*}{Bochner's Theorem}
+\newtheorem*{lemma*}{Eigenfunctions of $T_{\Theta \circ k_\text{RBF}}$}
+
+% Title Block
+\maketitle
+\thispagestyle{fancy}
+
+
+\section{Introduction}
+Recent research in computer vision has examined the consequences of replacing traditional means of representing images (such as voxel grids) with coordinate-based multilayer perceptrons (MLPs), fully-connected networks trained on a single image that predict target values from pixel coordinates. Coordinate-based MLPs, which offer fundamentally continuous representations of images, are well-suited to novel view synthesis \cite{NeRF} and image upscaling \cite{CMLPs}; further, the cost of storing a trained network is typically cheaper than that of discrete representations.\\
+\\
+However, coordinate-based MLPs often fail to capture high-frequency components in a target image \cite{Tancik20, PINN}. This phenomenon, known as spectral bias, has been widely-observed in other networks trained to complete different tasks. Spectral bias has been put forward as a probable explanation for deep networks' ability to generalize to unseen data \cite{generalize}; in high-dimensional learning domains, spectral bias prevents deep networks from learning noisy components in data and thereby overfitting.\\
+\\
+Tancik et al. 2020 \cite{Tancik20} demonstrated that positionally encoding data prior to training overcomes spectral bias in low-dimensional settings, such as pixel regression. To this end, \cite{Tancik20} draws on the theory of Random Fourier Feature (RFF) embeddings, first proposed as a means of scaling kernel machines to large quantities of data \cite{RFF}. Further research has extended \cite{Tancik20}'s approach to overcoming spectral bias in other settings, such as training physics-informed neural networks (PINNs) \cite{PINN}.\\
+\\
+We discuss both the theoretical and empirical links between spectral bias and RFF embeddings. To this end, we divide the report into three over-arching segments. We first detail how spectral bias can be ascribed to the eigendecomposition of the neural tangent kernel (NTK); we then explore experimental results highlighting the utility of RFF embeddings; finally, we discuss how tuning RFF embeddings changes the spectrum of the NTK.
+\section{Background}
+We introduce several pieces of notation and background to aid our discussion. We consider some arbitrary dataset $\mathcal{D} = \{\mathbf{x}_i, y_i\}_{i = 1}^N$ where $\mathbf{x}_i \in \R^{d}, y_i \in \R$ with small $d$ (e.g. $d = 2$ for pixel regression). We denote the set of training samples as $\X = \{\mathbf{x}_{i}\}_{i = 1}^N \in \R^{N \times d}$ and the set of training labels as $\Y = \{y_i\}_{i = 1}^N \in \R^N$. In our later experiments on images, we take $\X$ as a set of pixel coordinates and $\Y$ as the corresponding set of pixel intensities. We let $f_\theta : \R^{d} \rightarrow \R$ be a trained, fully-connected network with $L$ hidden layers of widths $n_1, \dots, n_L$ and non-linear activation function $\sigma$. We let $h_l : \R^{n_{l - 1}} \rightarrow \R^{n_l}$ be the pre-activation function given at each layer and let $h_{L + 1} : \R^{L} \rightarrow \R$ be a single output unit. We write $f_\theta$ as
+$$f_\theta(\mathbf{x}) = (h_{L + 1} \circ \sigma \circ h_{L} \circ \dots \sigma \circ h_{1})(\mathbf{x})$$
+where $\theta$ denotes the vector of weights and biases. Further, we let $f_{\theta, 0}$ denote the network at initialization and let $f_{\theta, t}$ denote the network after $t$ training epochs. We assume that $f_{\theta, t}$ is trained via an MSE loss function $\mathcal{L}$:
+$$\mathcal{L} = \frac{1}{N}||f(\X) - \Y||_2^2$$
+In addition to notation on networks, we introduce notation on kernels. Generically, we define a kernel $k$ as a function $k : \R^d \times \R^d \mapsto \R$. Given some dataset $\mathcal{D}$, we typically associate $k$ with two objects: its Gram matrix $\mathbf{K}$, defined as $\mathbf{K}_{i,j} = k(\mathbf{x}_i, \mathbf{x}_j)$, and its associated integral operator $T_k$:
+$$T_k(f)(\mathbf{x}) = \int_D f(\mathbf{x})k(\mathbf{x}, \mathbf{x}')d\mathbf{x}'$$
+where $f(\mathbf{x})$ is a continuous, square-integrable function over some domain $D$. In this report, we typically assert that $k$ is a Mercer kernel. This means that $k$ is continuous, symmetric and $\mathbf{K}$ is positive semi-definite, given as 
+$$\mathbf{v}^T\mathbf{K}\mathbf{v} \ge 0 \text{  for all  } \mathbf{v} \neq \mathbf{0}$$
+When $k$ is a Mercer kernel, $k$ admits a representation as a sum of countably many eigenfunctions $\phi_1, \phi_2, \dots$ of $T_k$:
+$$k(\mathbf{x}, \mathbf{x}') = \sum_{i = 1}^\infty\lambda_i\phi_i(\mathbf{x})\phi_i(\mathbf{x}') \text{  where  } \lambda_i\phi_i(\mathbf{x}) = T_k(\phi_i)(\mathbf{x})$$
+We also typically consider shift-invariant kernels, which depend only on the difference between two inputs and thus satisfy $k(\mathbf{x}, \mathbf{x}') = k(\mathbf{x} - \mathbf{x}')$, and rotation-invariant kernels, which depend only on the angle between two inputs. In our experiments, we specialize to the RBF kernel $k_\text{RBF}$ given as
+$$k_\text{RBF}(\mathbf{x}, \mathbf{x}') = e^{-\frac{||\mathbf{x} - \mathbf{x}'||_2^2}{2\sigma^2}}$$
+where $\sigma \in \R$ is called the kernel's length-scale parameter. $k_\text{RBF}$ is both shift-invariant and a Mercer kernel.
+
+\section{Neural Tangent Kernel}
+We seek to generalize our study of spectral bias to neural networks of arbitrary depth and arbitrary choice of activation function. Thus, we primarily utilize the neural tangent kernel first outlined in Jacot et al. 2018 \cite{NTK}. Under certain asymptotic conditions, the NTK provides a general framework for analyzing the outputs and training dynamics of fully-connected networks. Given a network $f_{\theta, t}$ and data set $\mathcal{D} = \{(\mathbf{x}_i, y_i)\}_{i = 1}^N$ where $\mathbf{x}_i \in \R^d, y_i \in \R$, we define the epoch-indexed empirical NTK  $\hat{\Theta}_t$ as follows:
+$$\hat{\Theta}_t(\mathbf{x}_i, \mathbf{x}_j) = \nabla_\theta f_{\theta, t}(\mathbf{x}_i)^T \nabla_\theta f_{\theta, t}(\mathbf{x}_j)$$
+We may then explicitly describe the evolution of $\theta_t$ and $f_{\theta, t}$ under training in terms of $\hat{\Theta}_t$, drawing on results from Lee et al. 2019 \cite{Lee}:
+$$\frac{d\theta_t}{dt} = -\eta \nabla_\theta f_{\theta, t}(\X)^T\nabla_{f_{\theta, t}(\X)}\mathcal{L}$$
+$$\frac{df_{\theta, t}(\X)}{dt} = -\eta \hat{\Theta}(\X, \X)\nabla_{f_{\theta, t}(\X)}\mathcal{L}$$
+where $\eta$ is the learning rate. Remarkably, if $\theta$ is initialized according to a Gaussian distribution, $f_{\theta, t}$ is trained under gradient flow, and the width of each layer of $f_{\theta}$ goes to infinity, then $\hat{\Theta}_t$ converges to the deterministic NTK $\Theta$, given as
+$$\Theta(\mathbf{x}_i, \mathbf{x}_j) = \E_{\theta \sim \mathcal{N}}\Bigl[\nabla_\theta f_\theta(\mathbf{x}_i)^T \nabla_\theta f_\theta(\mathbf{x}_j)\Bigr]$$
+In this infinite-width regime, training $f_{\theta, t}$ on $\mathcal{D}$ is then equivalent to performing kernel regression with $\Theta$. Using this new description of the training dynamics of $f_{\theta, t}$, we may easily tie spectral bias to the eigendecomposition of $\Theta$. Letting $\mathbf{K} \in \R^{N \times N}$ denote $\Theta$'s Gram matrix and rescaling $\mathcal{L}$ by a constant, we have
+$$\frac{df_{\theta, t}(\X)}{dt} \approx - \eta\mathbf{K} (f_{\theta, t}(\X) - \Y)$$
+Recognizing this as a first-order ordinary differential equation, we may explicitly solve for $f_{\theta, t}(\X)$:
+$$f_{\theta, t}(\X) \approx (\mathbf{I} - e^{-\eta\mathbf{K} t})\Y$$
+% Mention earlier that the neural tangent kernel is PSD. Also add in the learning rate please. And hat{theta} is the final outputs after training.
+ In this setting, $\mathbf{K}$ is positive semi-definite, so we then take its spectral decomposition. We let $\mathbf{K} = \mathbf{Q}^T\mathbf{\Lambda Q}$ where $\mathbf{Q} \in \R^{N \times N}$ is an orthogonal matrix of eigenvectors and $\mathbf{\Lambda} \in \R^{N \times N}$ is a diagonal matrix of eigenvalues. Using the properties of the matrix exponential, we then explicitly define the training error as 
+$$f_{\theta, t}(\X) - \Y \approx (\mathbf{I} - \mathbf{Q}e^{-\eta\mathbf{\Lambda} t}\mathbf{Q}^T) \Y - \Y = - \mathbf{Q}e^{-\eta\mathbf{\Lambda} t}\mathbf{Q}^T \Y$$
+$$\mathbf{Q}^T(f_{\theta, t}(\X) - \Y) \approx -e^{-\mathbf{\eta\Lambda} t}\mathbf{Q}^T \Y$$
+As $\mathbf{\Lambda}$ is diagonal, we may decompose this approximation according to the eigenvectors of $\mathbf{K}$:
+$$\mathbf{q}_i^T(f_{\theta, t}(\X) - \Y) \approx -e^{-\eta\lambda_i t}\mathbf{q}_i^T\Y$$
+for $i \in \{1, \dots, N\}$. Taking $\lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_N$, we note that the speed of convergence along the $i$-th eigendirection of $\mathbf{K}$ is proportional to the size of $\lambda_i$. Here lies spectral bias: $f_{\theta, t}$ learns components of the target function lying along eigendirections with large corresponding eigenvalues faster than those components lying along eigendirections with small corresponding eigenvalues. As high-frequency components correspond to smaller eigenvalues, which happen to decay quickly during training \cite{Decay}, $f_{\theta, t}$ struggles to learn them.\\
+\\
+We may partially generalize this result to finite-width networks, following the work of Cao et al. 2019 \cite{Cao21}. We let $f_\theta$ be a trained, two-layer ReLU network given as follows:
+$$f_\theta(\mathbf{x}) = \sqrt{m} \cdot \mathbf{W}_2 \cdot \max\{0, \mathbf{W}_1\mathbf{x}\}$$
+where $\mathbf{W}_1 \in \R^{m \times (d + 1)}, \mathbf{W}_2 \in \R^{1 \times m}$ represent the weights and biases of the first and second layers, respectively. In this set-up, $\Theta$ takes the form of a weighted sum of positive semi-definite arc-cosine kernels, and is thus a positive semi-definite kernel itself. As $\Theta$ is also symmetric and continuous, it is a Mercer kernel. Accordingly, $\Theta$ admits a representation as a sum of countably many eigenfunctions, which form the eigensystem of its associated integral operator $T_{\Theta}$:
+$$\Theta(\mathbf{x}, \mathbf{x}') = \sum_{j = 1}^{\infty}\lambda_i\phi_i(\mathbf{x})\phi_i(\mathbf{x}') \text{  where  } \lambda_i\phi_i(\mathbf{x}) = T_\Theta(\phi_i)(\mathbf{x}) = \int_{D}\Theta(\mathbf{x}, \mathbf{x}')\phi_i(\mathbf{x})'d\mathbf{x}'$$
+This result allows the eigendecomposition of $\Theta$ to be studied directly, rather than numerically approximated. We further suppose that $\X$ is uniformly distributed over $\mathbb{S}^d$, the unit hypersphere in $\R^d$. We denote the eigensystem of $\Theta$ as $\phi_{1}, \dots, \phi_N$ where $1 \ge \lambda_1 \ge \lambda_2 \ge \dots \ge \lambda_N$. Letting $r_k$ be the sum of the multiplicity of the first $k$ eigenvalues of $\Theta$, we define $\mathbf{V}_{r_k} \in \R^{N \times r_k}$ where
+$$\mathbf{V}_{r_k} = \frac{1}{\sqrt{N}}\begin{bmatrix}
+    \phi_1(\mathbf{x}_1) & \dots &  \phi_{r_k}(\mathbf{x}_1)\\
+    \vdots & \vdots & \vdots \\
+    \phi_1(\mathbf{x}_N) & \dots &  \phi_{r_k}(\mathbf{x}_N)
+\end{bmatrix}$$
+More explicitly, $\mathbf{V}_{r_k}$ represents the first $r_k$ eigenfunctions of $\Theta$ evaluated on $\X$. Then $||\mathbf{V}^T_{r_k}(\Y - f_{\theta}(\X))||_2$ approximately represents
+how well $f_\theta$ has learned the components corresponding to the first $r_k$ eigenvalues of $\Theta$. Under some asymptotic conditions on $N, m$, we have for any $\varepsilon, \delta > 0$,
+$$||\mathbf{V}^T_{r_k}(\Y - f_{\theta}(\X))||_2 \le 2(1 - \lambda_{r_k})||\mathbf{V}^T_{r_k}\Y||_2 + \varepsilon\sqrt{N}$$
+with probability at least $1 - \delta$. As $k \rightarrow 1$, we note that the upper bound on $||\mathbf{V}^T_{r_k}(\Y - f_{\theta}(\X))||_2$ tightens, indicating that $f_\theta$ has learned the first $r_k$ eigenfunctions well. As $k \rightarrow N$, said upper bound loosens, indicating that $f_\theta$ hasn't necessarily learned the first $r_k$ eigenfunctions well. Thus, as in the infinite-width setting, $f_\theta$ is biased towards learning the target functions' components corresponding to larger eigenvalues.\\
+\\
+One might argue that this result outlined in \cite{Cao21}, which only bounds the convergence from above, is not especially strong. In restricting $\X$ to $\mathbb{S}^d$, we cannot extend this result to any dataset in $\R^d$; nor can we extend it to networks of arbitrary depth. Critically, however, this upper bound indicates that the link between spectral bias and the NTK extends beyond the infinite-width setting. In order to better document this connection for networks of arbitrary depth, we later turn to numerical computation of the NTK's spectrum.
+
+\section{Random Fourier Features}
+Before exploring the newfound applications of Random Fourier Feature embeddings outlined in \cite{Tancik20}, we discuss both their original purpose, as first presented in \cite{RFF}. RFF embeddings were formulated as a means of scaling up kernel machines – such as support vector machines or kernel ridge regressors – to large quantities of data. They utilize Bochner's Theorem, a classical result in harmonic analysis that enables approximation of continuous, shift-invariant kernels.
+\begin{btheorem*}
+    Let $k$ be a continuous, shift-invariant kernel on $\R^d$. Take $\mathbf{x}, \mathbf{x}' \in \R^d$ and let $\delta = \mathbf{x} - \mathbf{x'}$. Then $k$ is positive-definite if and only if $k(\mathbf{x}, \mathbf{x}') = k(\delta)$ is the Fourier transform of a non-negative measure $\omega$ for all pairs $\mathbf{x}, \mathbf{x}'$.
+\end{btheorem*} 
+\noindent Bochner's Theorem thus associates $k(\delta)$ with $p(\omega)$,  typically referred to as $k(\delta)$'s spectral distribution or Fourier dual. Defining $\zeta_\omega(\delta) = e^{-i\omega^T\delta}$, we have
+$$k(\delta) = \int_{\R^d}\zeta_\omega(\delta)p(\omega)d\omega \hspace{20pt} p(\omega) = \int_{\R^d}\zeta_\omega^*(\delta)k(\delta)d\delta$$
+When $k(\delta)$ is properly scaled, we can assert that $p(\omega)$ is a true probability distribution on $\R^d$. We may then express $k(\delta)$ as an expectation in terms of $\omega$:
+$$k(\mathbf{x}, \mathbf{x}') = k(\delta) = \E_{\omega \sim p(\omega)}\Bigl[\zeta_\omega(\delta)\Bigr] = \E_{\omega \sim p(\omega)}\Bigl[ \zeta_\omega(\mathbf{x})\zeta_\omega^*(\mathbf{x}')\Bigr]$$
+However, we note that $k(\delta)$ and $p(\omega)$ are both real-valued, whereas $\zeta_\omega(\delta)$ is complex-valued; for our purposes, it is sufficient to consider the real part of $\zeta_\omega(\delta)$. Using some trigonometric identities, we define $r_\omega(\mathbf{x})$ such that $r_\omega(\mathbf{x})r_\omega(\mathbf{x}') = \text{Re}(\zeta_\omega(\mathbf{x})\zeta^*_\omega(\mathbf{x}')) = \cos(\omega^T(\mathbf{x} - \mathbf{x}'))$: 
+% for our purposes, it is sufficient to consider the real part of $\zeta_\omega(\delta)$, which we define as $r_\omega(\delta) = \text{Re}(\zeta_\omega(\delta))$. As $r_\omega(\delta)$ is real-valued, $r_\omega(\delta) = \text{Re}(\zeta_{\omega}(\delta)) = \text{Re}(\zeta^*_{\omega}(\delta))$. Thus we write
+$$k(\mathbf{x}, \mathbf{x}') = k(\delta) = \E_{\omega \sim p(\omega)}\Bigl[ r_\omega(\mathbf{x})r_\omega(\mathbf{x}')\Bigr]$$
+We may then approximate $k(\mathbf{x}, \mathbf{x}') = k(\delta)$ by drawing $m$ random samples from $p(\omega)$:
+$$k(\mathbf{x}, \mathbf{x}') \approx \frac1m \sum_{j = 1}^mr_{\omega_j}(\mathbf{x})r_{\omega_j}(\mathbf{x}')$$
+This approximation can be written as a random embedding of $\mathbf{x}, \mathbf{x}'$ into $m$-dimensional space such that. Given some set of random vectors $\omega_1, \dots, \omega_m$ sampled from $p(\omega)$, we define $z(\mathbf{x}) \in \R^m$ as
+$$z(\mathbf{x}) = \Biggl[\frac{r_{\omega_1}(\mathbf{x})}{\sqrt{m}}, \dots, \frac{r_{\omega_m}(\mathbf{x})}{\sqrt{m}}\Biggl]^T \text{  such that  } k(\mathbf{x}, \mathbf{x}') \approx z(\mathbf{x})z(\mathbf{x}')$$
+For a data set $\mathcal{D} = \{\mathbf{x}_i, y_i\}_{i = 1}^N$, we construct matrix $\mathbf{Z} \in \R^{N \times m}$ defined as $\mathbf{Z}_{i, j} = z(\mathbf{x}_i)_j$. Then we may approximate the Gram matrix $\mathbf{K} \in \R^{N \times N}$ corresponding to $k$ as $\mathbf{K} \approx \mathbf{Z}\mathbf{Z}^T$. We may view this procedure as finding a `nice' random higher-dimensional embedding of $\mathcal{D}$ – specifically, one where evaluating a kernel in $\R^d$ at two points is roughly equivalent to dotting said points embedded in $\R^m$.\\ 
+\\
+In RFF's original setting in \cite{RFF}, approximating $\mathbf{K}$ as $\mathbf{ZZ}^T$ significantly reduces computation and storage costs when $N \gg 0$. Storing $\mathbf{K}$ requires $\mathcal{O}(N^2)$ space, whereas storing $\mathbf{Z}$ requires $\mathcal{O}(Nm)$ space; similarly, computing $\mathbf{K}$ directly requires $\mathcal{O}(N^3)$ computations whereas computing $\mathbf{ZZ}^T$ requires $\mathcal{O}(Nm^2)$ computations. If we take $m > d$ but $m \ll N$, then this provides a significant improvement. Further, the approximation decreases exponentially in $m$, so it is usually sufficient to consider a `small' number of random features. 
+\section{Applications to Low-Dimensional Tasks}
+Closely following the work presented in \cite{Tancik20}, we repurpose RFF embeddings as a means of overcoming spectral bias, thereby  allowing fully-connected networks fo `perfectly' learn all components of a target function. Rather than passing our training samples $\X \in \R^{N \times d}$ directly into our network $f_\theta$, we choose some $p(\omega)$, draw $m$ samples $\omega_1, \dots, \omega_m$ from $p(\omega)$, and pass $\gamma(\X) \in \R^{N \times 2m}$ into $f_\theta$, where $\gamma(\X)$ is defined as follows:
+$$\gamma(\mathbf{x}) = \frac{1}{\sqrt{m}}\begin{bmatrix}
+    \cos(\mathbf{B}\mathbf{x})\\
+    \sin(\mathbf{B}\mathbf{x})\\
+\end{bmatrix} \text{  and  }
+\gamma(\X) = \frac{1}{\sqrt{m}}\begin{bmatrix}
+    \cos(\mathbf{B}\X)\\
+    \sin(\mathbf{B}\X)\\
+\end{bmatrix}$$
+where the rows of random matrix $\mathbf{B} \in \R^{m \times d}$ are $\omega_1, \dots, \omega_m$. While not immediately obvious, we note that $\gamma(\mathbf{x})^T\gamma(\mathbf{x}')$ is an approximation for $k(\mathbf{x}, \mathbf{x}')$:
+\begin{align*}
+    \gamma(\mathbf{x})^T\gamma(\mathbf{x}')  &= \frac1m \sum_{\ell = 1}^m \cos(\omega_\ell^T\mathbf{x})\cos(\omega_\ell^T\mathbf{x}') + \sin(\omega_\ell^T\mathbf{x})\sin(\omega_\ell^T\mathbf{x}')\\
+    &= \frac1m\sum_{\ell = 1}^m \cos(\omega_\ell^T(\mathbf{x} - \mathbf{x}'))\\ 
+    &= \frac1m\sum_{\ell = 1}^m r_{\omega_\ell}(\mathbf{x})r_{\omega_\ell}(\mathbf{x}')\\\ 
+    &\approx k(\mathbf{x}, \mathbf{x}')
+\end{align*}
+Under the infinite-width regime, in which $\hat{\Theta}$ converges to $\Theta$, training $f_\theta$ on the randomly-embedded dataset $\mathcal{D}_\gamma = \{\gamma(\X), \Y\}$ is approximately equivalent to composing $\Theta$ with $k$:
+$$\Theta(\gamma(\mathbf{x})^T\gamma(\mathbf{x}')) \approx \Theta(k(\mathbf{x}, \mathbf{x}'))$$
+This embedding yields two primary advantages. First, it allows us to explicitly tune the predictions of $f_\theta$; in selecting both $k$ and its parameters (such as length scale for the RBF kernel), we may probabilistically tune $\mathbf{B}$ and thus tune $\gamma(\X)$.\\ 
+\\
+Secondly, it ensures that the composed kernel $\Theta \circ k$ is shift-invariant as $k(\mathbf{x}, \mathbf{x}')$ is a function of $\mathbf{x} - \mathbf{x}'$. $\Theta$ is itself a dot-product kernel, ensuring that it is rotation-invariant but not necessarily shift-invariant. However, for the sake of pixel regression, we would like to model all components of an image regardless of position; thus shift-invariance is a key property.\\
+\\
+Our complete procedure is this: we pick some parameterized shift-invariant kernel $k$, find its spectral density $p(\omega)$, draw $m$ samples $\omega_1, \dots, \omega_m$, construct $\mathcal{D}_\gamma = \{\gamma(\X), \Y\}$ and then train $f_\theta$ on $\mathcal{D}_\gamma$. In our following experiments, we specialize to the RBF kernel $k_{\text{RBF}}$ with length-scale $\sigma$: its smoothness ensures that $f_\theta$'s predictions are `nice' and its corresponding spectral density $p(\omega)$ is $\mathcal{N}(0, \sigma^{-2}\mathbf{I})$, an isotropic Gaussian. This simplifies our sampling procedure, as the components of $\mathbf{B}$ are independent and identically distributed: $\mathbf{B}_{i, j} \sim \mathcal{N}(0, \sigma^{-2}\mathbf{I})$.
+\section{Experiments}
+We conduct two series of computational experiments to examine the efficacy of RFF embeddings in overcoming spectral bias in low-dimensional settings. We first train several networks to fit 20 training points drawn from a pre-determined, high-frequency function $f:\R \rightarrow \R$ given by
+$$f(x) = \sin(2\pi x) + \cos(7\pi x) + \frac{\sin(12\pi x)}{3} + \frac{\cos(15\pi x)}{2}$$\\
+To ensure meaningful comparisons between experiments, we fix the learning rate $\eta$, the number of random features $m$ and the architecture of $f_\theta$: we set $\eta = 0.01$, $m = 5$, and let $f_\theta$ be a  fully-connected ReLU network with four hidden layers, each with 64 hidden units. We also fix the batch size as 1.\\
+\begin{figure}[h]
+\centering 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_1a1.png}} 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_1a2.png}} 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_1a3.png}} 
+\caption{Embedding-free network's prediction at various training stages. The network fails to learn the high-frequency components of $f$, and struggles to interpolate even after 200 training epochs.} \label{fig:multiimage} 
+\end{figure}
+\begin{figure}[h]
+\centering 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_1b1.png}} 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_1b2.png}} 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_1b3.png}} 
+\caption{Predictions of networks with embeddings given by different $\sigma$. When $\sigma$ is well-tuned, the network accurately reconstructs $f$. When $\sigma$ is too high, it underfits with a low-frequency prediction; when $\sigma$ is too low, it overfits with a high-frequency prediction.} \label{fig:multiimage} 
+\end{figure}
+
+\noindent We then perform pixel regression on a predetermined 512-by-512 image with a five different networks: one without an RFF embedding, and four with an embedding, where $\sigma \in \{5, 1, 0.3, 0.04\}$. We fix $\eta = 0.01$, $m = 10$, and $f_\theta$ to be a fully-connected ReLU network with four hidden layers, each with 256 hidden units. We train each network for 100 epochs and increase the batch size to 1024, reflecting the size of $\mathcal{D}$ and $\mathcal{D}_\gamma$. 
+
+
+\begin{figure}[h]
+\centering 
+\subfigure{\includegraphics[width=0.16\linewidth]{fig_2a0.png}} 
+\subfigure{\includegraphics[width=0.16\linewidth]{fig_2a1.png}} 
+\subfigure{\includegraphics[width=0.16\linewidth]{fig_2a2.png}} 
+\subfigure{\includegraphics[width=0.16\linewidth]{fig_2a3.png}} 
+\subfigure{\includegraphics[width=0.16\linewidth]{fig_2a4.png}} 
+\subfigure{\includegraphics[width=0.16\linewidth]{fig_2a6.png}} 
+\caption{From left to right: (1) original 512 $\times$ 512 image, (2) prediction without embedding, (3) prediction with embedding, $\sigma = 5$, (4) $\sigma = 1$, (5) $\sigma = 0.3$, and (6) $\sigma = 0.04$.} \label{fig:multiimage} 
+\end{figure}
+
+\noindent Across both sets of experiments, we observe that the embedding-free networks fail to capture the high-frequency components in the target function. We also observe that the quality of the prediction given by the networks trained on RFF-embedded data rests on the choice of $\sigma$. When $\sigma$ is too high, these networks underfit the data, yielding a prediction similar to that of the embedding-free networks. Conversely, when $\sigma$ is too low, these networks appear to learn high-frequency noise in the data, thus overfitting the data. In the `Goldilocks Zone' between these extremes, however, these networks appear to perfectly reconstruct the target function.  
+\section{Spectral Analysis}
+We explore how RFF embeddings overcome spectral bias by examining the spectrum of the composed kernel $\Theta \circ k_\text{RBF}$ for different values of length-scale $\sigma$. Analytically representing the spectrum and eigenfunctions of a network of arbitrary depth is not straightforward; thus we restrict our analytical study to two-layer bias-free networks, and treat larger networks solely through empirical study. Our networks take the form
+$$f_\theta(\mathbf{x}) = \frac{1}{\sqrt{m}}\mathbf{W}\begin{bmatrix}
+    \cos(\mathbf{Bx})\\
+    \sin(\mathbf{Bx})\\
+\end{bmatrix}$$
+where $\mathbf{W} \in \R^{1 \times 2m}$ is a matrix of weights and $m$ is the number of random features. We may then explicitly describe the composed empirical NTK $\hat{\Theta} \circ k_\text{RBF}$'s associated Gram matrix $\hat{\mathbf{K}}$ as
+$$\hat{\Theta} \circ k_\text{RBF}(\mathbf{x}_i, \mathbf{x}_j) \approx \hat{\mathbf{K}}_{i, j} = \frac1m \begin{bmatrix}
+    \cos(\mathbf{Bx}_i)\\
+    \sin(\mathbf{Bx}_i)\\
+\end{bmatrix}^T\begin{bmatrix}
+    \cos(\mathbf{Bx}_j)\\
+    \sin(\mathbf{Bx}_j)\\
+\end{bmatrix} = \frac1m \sum_{\ell = 1}^m \cos(\mathbf{b}_\ell^T(\mathbf{x}_i - \mathbf{x}_j))$$
+If we return to the infinite-width regime outlined in \cite{Lee}, under which $\hat{\Theta}$ converges to $\Theta$, then the eigensystem of $\hat{\mathbf{K}}$ converges to that of $\mathbf{K}$, which is equivalent to the eigensystem of the familiar Hilbert-Schmidt operator $T_{\Theta}$, whose eigenfunctions $g(\mathbf{x})$ satisfy $\lambda g(\mathbf{x}) = T_{\Theta}(g)(\mathbf{x})$. We then may re-write the eigenfunctions of $T_{\Theta \circ k_\text{RBF}}$ in terms of their Laplacian, using an identity defined in \cite{PINN}:
+\begin{lemma*} The eigenfunctions $g(\mathbf{x})$ of $T_{\Theta \circ k_\text{RBF}}$ corresponding to non-zero eigenvalues satisfy the following equation:
+$$\Delta g(\mathbf{x}) = -\frac1m||\mathbf{B}||_F^2g(\mathbf{x})$$
+\end{lemma*}
+\noindent If we further restrict our study to $m = 1, d = 1$ and consider $x_1, \dots, x_N$ drawn from [0, 1], we can explicitly describe the spectrum of $\Theta \circ k_\text{RBF}$. Recalling that  $p(\omega) = \mathcal{N}(0, \sigma^{-2}\mathbf{I})$, we note that $\mathbf{B} = b \in \R$ where $b \sim \mathcal{N}(0, \sigma^{-2})$ and $\Theta \circ k_\text{RBF}(x, x') = \cos(b(x - x'))$. The Laplacian expression reduces to
+$$\frac{\partial^2g(x)}{\partial x^2} = -b^2g(x)$$
+which enables straightforward calculation of the eigenfunctions $g(x)$ by solving both this second-order ordinary differential equation and the Laplacian eigenvalue equation given by $T_{\Theta \circ k_\text{RBF}}$. Specifically, the non-zero eigenvalues of $\Theta \circ k_\text{RBF}(x, x')$ are
+$$\lambda_1 = \frac{1 + \frac{\sin b}{b}}{2} \text{  and  } \lambda_2 = \frac{1 - \frac{\sin b}{b}}{2}$$
+Here, we explicitly study the effects of changing $\sigma$. As $\sigma \rightarrow 0$, the variance of $p(\omega)$ increases. Then we increase the probability that $\frac{\sin b}{b}$ is close to 0, thereby increasing the probability that $\lambda_1, \lambda_2$ are very close to $\frac12$. Thus, by decreasing $\sigma$, we probabilistically compress the spectrum of $\Theta \circ k_\text{RBF}$. As noted in our earlier discussion of the infinite-width case, $f_\theta$ learns the eigendirections of a target function at a rate proportional to their corresponding eigenvalues. By compressing the spectrum of $\Theta \circ k_\text{RBF}$, we appear to ensure that all eigendirections are learned at approximately the same rate, thereby overcoming spectral bias.\\ 
+\\
+This theoretical result appears to validate the empirical results from our first set of experiments with $f: \R \rightarrow \R$. We observed that, as $\sigma \rightarrow 0$, the frequency of the network $f_\theta$'s prediction on $[0, 1]$ increased, indicating that $\sigma$ tuned $f_\theta$'s ability to learn the high-frequency components of $f$.\\
+\\
+To examine the effect of varying $\sigma$, we turn to numerical estimation of the spectrum of $\hat{\Theta} \circ k_\text{RBF}$ in the finite-width setting. We sample fifty equally-spaced points from the target function $f : \R \mapsto \R$ used in our first round of experiments. We fix our network $f_\theta$ as a fully-connected ReLU-based network with four hidden layers, each with 64 units; we then compute $\hat{\mathbf{K}} \in \R^{50 \times 50}$ and take its eigendecomposition. We do this procedure once for $f_\theta$ with no RFF embedding (i.e. $f_\theta$ is trained directly on $\mathcal{D}$) and three times for $f_\theta$ with an RFF embedding where $\sigma \in \{5, 1, 0.1\}$ and $m = 5$.
+\begin{figure}[h]
+\centering 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_3a1.png}} 
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_3a2.png}}
+\subfigure{\includegraphics[width=0.32\linewidth]{fig_3a4.png}} 
+\caption{Eigenvalues of four networks, plotted on a logarithmic scale. When an RFF embedding is used and $\sigma \rightarrow 0$, the eigenvalues of $f_\theta$ are compressed to a smaller range.} \label{fig:multiimage} 
+\end{figure}
+
+\noindent This final set of experiments suggests that the analytical result for two-layer networks where $m = 1, d = 1$ extends to networks of arbitrary depth. As $\sigma \rightarrow 0$, the eigenvalues of $\hat{\mathbf{K}}$ become compressed to a smaller range, suggesting that all components of our target function $f$ are learned equally quickly. 
+\section{Conclusion}
+We demonstrated that spectral bias can be ascribed to the eigendecomposition of the neural tangent kernel in both infinite- and finite-width settings. Specifically, we showed that low-frequency components in a target function correspond to larger NTK eigenvalues, and are thus learned quickly, while high-frequency components correspond to smaller NTK eigenvalues and are learned slowly.\\
+\\
+We discussed how passing training samples through an RFF embedding overcomes spectral bias in low-dimensional settings. Further, we showed how networks' outputs can be explicitly tuned by changing $k$ and its parameters. Finally, we tied the efficacy of RFF embeddings to their compressive effect on the NTK spectrum through computation and direct analysis.\\
+\\
+Further research is needed to extend the theoretical links between spectral bias, the NTK and RFF embeddings. Many results tying spectral bias to the NTK make theoretically necessary assumptions that don't generalize to arbitrary networks – for instance, that $\X$ is distributed on $\mathbb{S}^d$ or that $f_\theta$ is a two-layer network. Additionally, we lack analytical results regarding the effect of RFF embeddings on the NTK spectrum for $m, d > 1$ and for non-RBF kernels.
+
+\bibliographystyle{plain}
+\bibliography{mine}{}
+
+\end{document}
