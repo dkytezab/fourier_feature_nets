@@ -65,28 +65,25 @@ class FourierFeatureEmbedding():
 
         size = (num_features, input_dim)
 
-        if kernel == None:
-          random_mat = np.eye(size=size)
-
         if kernel == 'RBF':
             '''Corresponding spectral kernel is Gaussian with mean=0, variance=1/length_scale**2'''
-            random_mat = np.random.normal(loc=0, 
-                                          scale=1 / length_scale, 
+            random_mat = np.random.normal(loc=0,
+                                          scale=1 / length_scale,
                                           size=size)
-        
+
         if kernel == 'Laplace':
             '''Corresponding spectral kernel is Cauchy with loc=0, scale=1/length_scale'''
-            random_mat = sp.stats.cauchy.rvs(loc=0, 
-                                             scale=1 / length_scale, 
+            random_mat = sp.stats.cauchy.rvs(loc=0,
+                                             scale=1 / length_scale,
                                              size=size)
         self.random_features = random_mat
         self.num_features = num_features
 
-    
+
     def embed(
             self,
             input: np.ndarray
-    ) -> torch.Tensor:
+    ) -> np.ndarray:
         '''Embeds a given dataset using the computed random features'''
 
         cos_mat = np.cos(2 * np.pi * self.random_features @ input.T)
@@ -94,5 +91,5 @@ class FourierFeatureEmbedding():
 
         embed_mat = np.concatenate(
             (cos_mat, sin_mat), axis=0).T / np.sqrt(self.num_features)
-        
-        return torch.tensor(embed_mat, dtype=torch.float32)
+
+        return embed_mat
